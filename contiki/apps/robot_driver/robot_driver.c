@@ -75,7 +75,7 @@ typedef struct {
 } pwm_config_t;
 /*---------------------------------------------------------------------------*/
 #define MAX_PWM  4
-static const pwm_config_t pwm_num[MAX_PWM] = {
+static pwm_config_t pwm_num[MAX_PWM] = {
   {
     .timer = PWM_TIMER_1,
     .ab = PWM_TIMER_A,
@@ -118,21 +118,35 @@ gpt_name(uint8_t timer)
 {
   switch(timer) {
   case PWM_TIMER_0:
-    return "PWM TIMER 0";
+    return "LEFT FORWARD";
   case PWM_TIMER_1:
-    return "PWM TIMER 1";
+    return "LEFT REVERSE";
   case PWM_TIMER_2:
-    return "PWM TIMER 2";
+    return "RIGHT FORWARD";
   case PWM_TIMER_3:
-    return "PWM TIMER 3";
+    return "RIGHT REVERSE";
   default:
     return "Unknown";
   }
 }
 #endif
 
+uint8_t next_index;
+
 int test(unsigned char c) {
-  leds_toggle(LEDS_RED);
+
+  if (next_index>=0 && next_index<MAX_PWM) {
+    pwm_num[next_index].duty = (uint8_t)c;
+    next_index = MAX_PWM;
+    uart_write_byte(0,c);
+  } else {
+    if (c=='a') next_index = 0;
+    else if (c=='b') next_index = 1;
+    else if (c=='c') next_index = 2;
+    else if (c=='d') next_index = 3;
+    else next_index = MAX_PWM;
+  }
+
   return 0;
 }
 
@@ -145,6 +159,8 @@ AUTOSTART_PROCESSES(&cc2538_pwm_test);
 PROCESS_THREAD(cc2538_pwm_test, ev, data)
 {
   PROCESS_BEGIN();
+
+  next_index = MAX_PWM;
 
   uint8_t i;
   memset(pwm_en, 0, MAX_PWM);
@@ -161,52 +177,20 @@ PROCESS_THREAD(cc2538_pwm_test, ev, data)
       PRINTF("%s (%u) configuration OK\n", gpt_name(pwm_num[i].timer),
              pwm_num[i].ab);
     }
+    if((pwm_en[i]) &&
+       (pwm_start(pwm_num[i].timer, pwm_num[i].ab,
+                  pwm_num[i].port, pwm_num[i].pin) != PWM_SUCCESS)) {
+      pwm_en[i] = 0;
+      PRINTF("%s (%u) failed to start \n", gpt_name(pwm_num[i].timer),
+             pwm_num[i].ab);
+    }
   }
 
-  // while(1) {
-    for(i = 0; i < MAX_PWM; i++) {
-      if((pwm_en[i]) &&
-         (pwm_start(pwm_num[i].timer, pwm_num[i].ab,
-                    pwm_num[i].port, pwm_num[i].pin) != PWM_SUCCESS)) {
-        pwm_en[i] = 0;
-        PRINTF("%s (%u) failed to start \n", gpt_name(pwm_num[i].timer),
-               pwm_num[i].ab);
-      }
-    }
-
-    while (1) {
-      leds_toggle(LEDS_BLUE);
-      uart_write_byte(0,'a');
-      etimer_set(&et, CLOCK_SECOND * 1);
-      PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
-    }
-
-    // for(i = 0; i < MAX_PWM; i++) {
-    //   if((pwm_en[i]) &&
-    //      (pwm_toggle_direction(pwm_num[i].timer,
-    //                            pwm_num[i].ab) != PWM_SUCCESS)) {
-    //     PRINTF("%s (%u) invert failed \n", gpt_name(pwm_num[i].timer),
-    //            pwm_num[i].ab);
-    //   }
-    // }
-
-    // etimer_set(&et, CLOCK_SECOND * 2);
-    // PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
-
-    // for(i = 0; i < MAX_PWM; i++) {
-    //   if((pwm_en[i]) &&
-    //      (pwm_stop(pwm_num[i].timer, pwm_num[i].ab,
-    //                pwm_num[i].port, pwm_num[i].pin,
-    //                pwm_num[i].off_state) != PWM_SUCCESS)) {
-    //     pwm_en[i] = 0;
-    //     PRINTF("%s (%u) failed to stop\n", gpt_name(pwm_num[i].timer),
-    //            pwm_num[i].ab);
-    //   }
-    // }
-
-    // etimer_set(&et, CLOCK_SECOND * 2);
-    // PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
-  // }
+  while (1) {
+    leds_toggle(LEDS_GREEN);
+    etimer_set(&et, CLOCK_SECOND * 1);
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+  }
 
   PROCESS_END();
 }
