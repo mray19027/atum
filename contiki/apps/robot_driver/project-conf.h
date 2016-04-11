@@ -9,6 +9,16 @@
 #define UART_CONF_WITH_INPUT 1
 #endif
 
+/** BUTTON_LEFT -> PC4 */
+#define BUTTON_LR_PORT        GPIO_C_NUM
+#define BUTTON_LR_PIN         0
+#define BUTTON_LR_VECTOR      NVIC_INT_GPIO_PORT_C
+
+/** BUTTON_DOWN -> PC7 */
+#define BUTTON_BACK_PORT        GPIO_C_NUM
+#define BUTTON_BACK_PIN         1
+#define BUTTON_BACK_VECTOR      NVIC_INT_GPIO_PORT_C
+
 #endif /* PROJECT_CONF_H_ */
 
 /** @} */

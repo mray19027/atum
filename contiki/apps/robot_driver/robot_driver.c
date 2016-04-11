@@ -56,6 +56,14 @@
 #include "dev/ioc.h"
 #include <stdio.h>
 #include <stdint.h>
+
+#include "dev/cc2538-sensors.h"
+#include "dev/button-sensor.h"
+#include "sys/etimer.h"
+#include "sys/rtimer.h"
+// #include "dev/als-sensor.h"
+#include "dev/serial-line.h"
+
 /*---------------------------------------------------------------------------*/
 #define DEBUG 0
 #if DEBUG
@@ -63,6 +71,10 @@
 #else
 #define PRINTF(...)
 #endif
+
+static uint8_t active;
+static struct etimer kicker_timer;
+
 /*---------------------------------------------------------------------------*/
 typedef struct {
   uint8_t timer;
@@ -74,40 +86,43 @@ typedef struct {
   uint32_t freq;
 } pwm_config_t;
 /*---------------------------------------------------------------------------*/
-#define MAX_PWM  4
+#define MAX_PWM  5
 static pwm_config_t pwm_num[MAX_PWM] = {
   {
     .timer = PWM_TIMER_1,
     .ab = PWM_TIMER_A,
     .port = GPIO_B_NUM,
-    .pin = 3,
-    .duty = 75,
+    .pin = 5,
     .freq = 490,
     .off_state = PWM_OFF_WHEN_STOP,
   }, {
     .timer = PWM_TIMER_1,
     .ab = PWM_TIMER_B,
     .port = GPIO_B_NUM,
-    .pin = 4,
-    .duty = 0,
+    .pin = 6,
     .freq = 490,
     .off_state = PWM_ON_WHEN_STOP,
   }, {
     .timer = PWM_TIMER_2,
     .ab = PWM_TIMER_A,
-    .port = GPIO_B_NUM
-,    .pin = 5,
-    .duty = 75,
+    .port = GPIO_B_NUM,
+    .pin = 3,
     .freq = 490,
     .off_state = PWM_OFF_WHEN_STOP,
   }, {
     .timer = PWM_TIMER_2,
     .ab = PWM_TIMER_B,
     .port = GPIO_B_NUM,
-    .pin = 6,
-    .duty = 0,
+    .pin = 4,
     .freq = 490,
     .off_state = PWM_ON_WHEN_STOP,
+  }, {
+    .timer = PWM_TIMER_3,
+    .ab = PWM_TIMER_A,
+    .port = GPIO_C_NUM,
+    .pin = 2,
+    .freq = 50,
+    .off_state = PWM_OFF_WHEN_STOP,
   }
 };
 static uint8_t pwm_en[MAX_PWM];
@@ -118,35 +133,70 @@ gpt_name(uint8_t timer)
 {
   switch(timer) {
   case PWM_TIMER_0:
-    return "LEFT FORWARD";
+    return "UNUSED";
   case PWM_TIMER_1:
-    return "LEFT REVERSE";
+    return "LEFT";
   case PWM_TIMER_2:
-    return "RIGHT FORWARD";
+    return "RIGHT";
   case PWM_TIMER_3:
-    return "RIGHT REVERSE";
+    return "KICKER";
   default:
     return "Unknown";
   }
 }
 #endif
 
-uint8_t next_index;
+void change_freq(uint8_t i, float duty) {
+  pwm_stop(pwm_num[i].timer, pwm_num[i].ab, pwm_num[i].port, pwm_num[i].pin, 0);
+  pwm_disable(pwm_num[i].timer, pwm_num[i].ab, pwm_num[i].port,  pwm_num[i].pin);
+  pwm_enable(pwm_num[i].freq, duty, pwm_num[i].timer, pwm_num[i].ab);
+  pwm_start(pwm_num[i].timer, pwm_num[i].ab, pwm_num[i].port, pwm_num[i].pin);
+}
+
+uint8_t buffer[5];
+uint8_t counter;
 
 int test(unsigned char c) {
+  if (counter==0) {
+    if ((uint8_t)c == 0x38 || (uint8_t)c == 0x40) {
+      buffer[0] = (uint8_t)c;
+      counter++;
+    }
+  } else if (counter>=4) {
+    buffer[4] = (uint8_t)c;
+    // if (buffer[4] == 0x39) {
+      if (buffer[1]==3) { //ID = 0
+        if (buffer[2]==90) {
 
-  if (next_index>=0 && next_index<MAX_PWM) {
-    pwm_num[next_index].duty = (uint8_t)c;
-    next_index = MAX_PWM;
-    uart_write_byte(0,c);
+          // change_freq(4, 11.7);
+          // etimer_set(&kicker_timer, CLOCK_SECOND * 0.5);
+          // PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&kicker_timer));
+          // change_freq(4, 3);
+          // etimer_set(&kicker_timer, CLOCK_SECOND * 0.5);
+          // PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&kicker_timer));
+          // change_freq(4, 7.35);
+
+        } else if (buffer[2]==97) {
+          change_freq(0, 0);
+          change_freq(1, buffer[3]);
+        } else if (buffer[2]==98) {
+          change_freq(1, 0);
+          change_freq(0, buffer[3]);
+        } else if (buffer[2]==99) {
+          change_freq(3, 0);
+          change_freq(2, buffer[3]);
+        } else if (buffer[2]==100) {
+          change_freq(2, 0);
+          change_freq(3, buffer[3]);
+        }
+        leds_toggle(LEDS_RED);
+      }
+    // }
+    counter = 0;
   } else {
-    if (c=='a') next_index = 0;
-    else if (c=='b') next_index = 1;
-    else if (c=='c') next_index = 2;
-    else if (c=='d') next_index = 3;
-    else next_index = MAX_PWM;
+    buffer[counter] = (uint8_t)c;
+    counter++;
   }
-
   return 0;
 }
 
@@ -160,7 +210,7 @@ PROCESS_THREAD(cc2538_pwm_test, ev, data)
 {
   PROCESS_BEGIN();
 
-  next_index = MAX_PWM;
+  counter = 0;
 
   uint8_t i;
   memset(pwm_en, 0, MAX_PWM);
@@ -171,7 +221,7 @@ PROCESS_THREAD(cc2538_pwm_test, ev, data)
   PRINTF("\nStarting the test\n");
 
   for(i = 0; i < MAX_PWM; i++) {
-    if(pwm_enable(pwm_num[i].freq, pwm_num[i].duty,
+    if(pwm_enable(pwm_num[i].freq, 0,
                   pwm_num[i].timer, pwm_num[i].ab) == PWM_SUCCESS) {
       pwm_en[i] = 1;
       PRINTF("%s (%u) configuration OK\n", gpt_name(pwm_num[i].timer),
@@ -187,9 +237,18 @@ PROCESS_THREAD(cc2538_pwm_test, ev, data)
   }
 
   while (1) {
-    leds_toggle(LEDS_GREEN);
-    etimer_set(&et, CLOCK_SECOND * 1);
-    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+
+    PROCESS_YIELD();
+
+    if(ev == sensors_event) {
+      if(data == &button_select_sensor) {
+
+      }
+    }
+    // leds_toggle(LEDS_GREEN);
+    // etimer_set(&et, CLOCK_SECOND);
+    // PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
+    // PRINTF("Toggling LED\n");
   }
 
   PROCESS_END();
