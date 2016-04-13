@@ -56,6 +56,7 @@
 #include "dev/ioc.h"
 #include <stdio.h>
 #include <stdint.h>
+#include "dev/gpio.h"
 
 #include "dev/cc2538-sensors.h"
 #include "dev/button-sensor.h"
@@ -72,8 +73,14 @@
 #define PRINTF(...)
 #endif
 
-static uint8_t active;
+#define BUTTON_PORT_BASE  GPIO_PORT_TO_BASE(BUTTON_PORT)
+#define BUTTON_PIN_MASK   GPIO_PIN_MASK(BUTTON_PIN)
+
+#define LEDS_OFF_HYSTERISIS (RTIMER_SECOND *3)
+
 static struct etimer kicker_timer;
+static struct rtimer rt;
+static uint8_t active;
 
 /*---------------------------------------------------------------------------*/
 typedef struct {
@@ -165,17 +172,12 @@ int test(unsigned char c) {
   } else if (counter>=4) {
     buffer[4] = (uint8_t)c;
     // if (buffer[4] == 0x39) {
+    if (active!=0) {
       if (buffer[1]==3) { //ID = 0
-        if (buffer[2]==90) {
-
-          // change_freq(4, 11.7);
-          // etimer_set(&kicker_timer, CLOCK_SECOND * 0.5);
-          // PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&kicker_timer));
-          // change_freq(4, 3);
-          // etimer_set(&kicker_timer, CLOCK_SECOND * 0.5);
-          // PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&kicker_timer));
-          // change_freq(4, 7.35);
-
+        if (buffer[2]==96) {
+          leds_toggle(LEDS_BLUE);
+          change_freq(4, 11.7);
+          etimer_set(&kicker_timer, CLOCK_SECOND * 0.5);
         } else if (buffer[2]==97) {
           change_freq(0, 0);
           change_freq(1, buffer[3]);
@@ -189,9 +191,8 @@ int test(unsigned char c) {
           change_freq(2, 0);
           change_freq(3, buffer[3]);
         }
-        leds_toggle(LEDS_RED);
       }
-    // }
+    }
     counter = 0;
   } else {
     buffer[counter] = (uint8_t)c;
@@ -200,8 +201,46 @@ int test(unsigned char c) {
   return 0;
 }
 
-/*---------------------------------------------------------------------------*/
-static struct etimer et;
+void
+rt_callback(struct rtimer *t, void *ptr)
+{
+  leds_toggle(LEDS_RED);
+  active = 0;
+}
+
+static void
+btn_callback(uint8_t port, uint8_t pin)
+{
+  change_freq(0, 0);
+  change_freq(1, 0);
+  change_freq(2, 0);
+  change_freq(3, 0);
+  leds_toggle(LEDS_RED);
+  rtimer_set(&rt, RTIMER_NOW() + LEDS_OFF_HYSTERISIS, 2, rt_callback, NULL);
+  active = 1;
+}
+
+static void
+config(uint32_t port_base, uint32_t pin_mask)
+{
+  /* Software controlled */
+  GPIO_SOFTWARE_CONTROL(port_base, pin_mask);
+
+  /* Set pin to input */
+  GPIO_SET_INPUT(port_base, pin_mask);
+
+  /* Enable edge detection */
+  GPIO_DETECT_EDGE(port_base, pin_mask);
+
+  /* Single edge */
+  GPIO_TRIGGER_SINGLE_EDGE(port_base, pin_mask);
+
+  /* Trigger interrupt on Falling edge */
+  GPIO_DETECT_FALLING(port_base, pin_mask);
+
+  GPIO_ENABLE_INTERRUPT(port_base, pin_mask);
+}
+
 /*---------------------------------------------------------------------------*/
 PROCESS(cc2538_pwm_test, "cc2538 pwm test");
 AUTOSTART_PROCESSES(&cc2538_pwm_test);
@@ -211,6 +250,7 @@ PROCESS_THREAD(cc2538_pwm_test, ev, data)
   PROCESS_BEGIN();
 
   counter = 0;
+  active = 0;
 
   uint8_t i;
   memset(pwm_en, 0, MAX_PWM);
@@ -236,19 +276,24 @@ PROCESS_THREAD(cc2538_pwm_test, ev, data)
     }
   }
 
+  gpio_init();
+  config(BUTTON_PORT_BASE, BUTTON_PIN_MASK);
+  ioc_set_over(BUTTON_PORT, BUTTON_PIN, IOC_OVERRIDE_PUE);
+  nvic_interrupt_enable(BUTTON_VECTOR);
+  gpio_register_callback(btn_callback, BUTTON_PORT, BUTTON_PIN);
+
+  leds_toggle(LEDS_GREEN);
+
   while (1) {
 
     PROCESS_YIELD();
 
-    if(ev == sensors_event) {
-      if(data == &button_select_sensor) {
-
-      }
-    }
-    // leds_toggle(LEDS_GREEN);
-    // etimer_set(&et, CLOCK_SECOND);
-    // PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et));
-    // PRINTF("Toggling LED\n");
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&kicker_timer));
+    change_freq(4, 3);
+    etimer_set(&kicker_timer, CLOCK_SECOND * 0.5);
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&kicker_timer));
+    change_freq(4, 7.35);
+    leds_toggle(LEDS_BLUE);
   }
 
   PROCESS_END();
