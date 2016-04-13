@@ -65,6 +65,8 @@
 // #include "dev/als-sensor.h"
 #include "dev/serial-line.h"
 
+#define ID 2
+
 /*---------------------------------------------------------------------------*/
 #define DEBUG 0
 #if DEBUG
@@ -173,7 +175,7 @@ int test(unsigned char c) {
     buffer[4] = (uint8_t)c;
     // if (buffer[4] == 0x39) {
     if (active!=0) {
-      if (buffer[1]==3) { //ID = 0
+      if (buffer[1]==ID) { //ID = 0
         if (buffer[2]==96) {
           leds_toggle(LEDS_BLUE);
           change_freq(4, 11.7);
@@ -215,7 +217,10 @@ btn_callback(uint8_t port, uint8_t pin)
   change_freq(1, 0);
   change_freq(2, 0);
   change_freq(3, 0);
+  change_freq(4, 11.7);
+  leds_toggle(LEDS_BLUE);
   leds_toggle(LEDS_RED);
+  etimer_set(&kicker_timer, CLOCK_SECOND * 0.5);
   rtimer_set(&rt, RTIMER_NOW() + LEDS_OFF_HYSTERISIS, 2, rt_callback, NULL);
   active = 1;
 }
